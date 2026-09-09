@@ -1,0 +1,83 @@
+# Architecture and scientific contracts
+
+## Pipeline
+
+```mermaid
+flowchart LR
+    D[Point-in-time panel] --> S[ExpandingWindowSplitter]
+    S --> P[Fold-local preprocessing]
+    P --> M[Registered regressors]
+    M --> O[Out-of-sample predictions]
+    O --> E[Point-in-time ensembles]
+    E --> R[Risk-aware allocation]
+    R --> B[Continuous self-financing backtest]
+```
+
+`EnsembleForecaster` orchestrates the first five stages. Allocation and backtesting
+are separate functions so a forecast experiment cannot silently change the economic
+evaluation protocol.
+
+## Input contract
+
+The forecaster consumes a pandas `DataFrame`. Multiple entities may share a date.
+The required semantic fields are:
+
+| Field | Meaning |
+|---|---|
+| forecast date | Information set and OOS prediction origin |
+| target | Value being forecast and later scored |
+| label-available date | First date on which that target can enter training or ensemble error history |
+| numeric/categorical features | Predictors as visible in the forecast-date vintage |
+| optional feature-available dates | Audit dates used to reject future feature values |
+
+The splitter requires `training date < forecast date` and
+`label-available date <= forecast date`. A row with an unavailable label can still
+be forecast and retained for later evaluation, but it cannot enter model fitting or
+adaptive ensemble weights prematurely.
+
+## Fold isolation
+
+Each estimator receives a fresh scikit-learn pipeline in every fold. Numeric medians
+or means, missing-value indicator selection, standardization, and categorical levels
+are learned on that fold's training rows only. Linear models are standardized by
+default. Tree models use unscaled numeric features. Unknown test categories are
+ignored by the encoder.
+
+`ForecastResult.fold_audit` records the train range, row and period counts, latest
+label date, test size, and model set. Fitted fold models are omitted by default to
+keep large runs memory-efficient; set `store_fitted_models=True` when model inspection
+is required.
+
+## Ensemble rules
+
+The equal ensemble averages all configured forecasts. The performance ensemble uses
+inverse trailing MSE or MAE. At forecast date `t`, its error history includes only
+predictions made before `t` whose realized labels are available by `t`. It uses equal
+weights during the configured warm-up. Weights are normalized to one and returned as
+a separate dated artifact.
+
+## Scaling and extension
+
+Panel rows, feature sets, and model sets are unrestricted by the API. Models within a
+fold can execute concurrently through `ForecasterConfig.n_jobs`. Built-in tree models
+default to one internal worker, preventing accidental nested parallelism. Custom model
+factories can expose their own compute strategy through `model_parameters`.
+
+For very large data, keep the panel in a columnar store, load the required sample once,
+and leave `store_fitted_models=False`. Fold outputs contain only identifiers, targets,
+dates, and predictions. The design deliberately avoids dependencies on a particular
+FX vendor, macroeconomic source, project directory, or experiment configuration.
+
+## Portfolio accounting
+
+`continuous_backtest` treats target weights as weights after rebalancing and before
+the period return. It solves transaction cost and executed holdings as a fixed point,
+then drifts those holdings through asset returns to produce the next date's pre-trade
+weights. Reported net returns satisfy
+
+```text
+1 + net_return = (1 - transaction_cost) * (1 + target_weight @ asset_return)
+```
+
+Turnover is one half of absolute traded weight. This convention is explicit and is
+tested through the returned holdings ledger.

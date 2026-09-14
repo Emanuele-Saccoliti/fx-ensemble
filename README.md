@@ -111,3 +111,40 @@ Pass the registry to `EnsembleForecaster(..., registry=registry)` and include
 See [`docs/architecture.md`](docs/architecture.md) for data contracts and component
 boundaries. The runnable example is in
 [`examples/volatility_forecast.py`](examples/volatility_forecast.py).
+
+## Save and compare experiments
+
+`ExperimentStore` saves named forecasting runs locally and generates standalone HTML
+reports without extra dependencies or external services:
+
+```python
+from fxensemble import ExperimentStore
+
+store = ExperimentStore("experiments")
+store.save("baseline", result, notes="Initial configuration", metadata={"dataset": "panel-v1"})
+# After running a different configuration on the same panel:
+store.save("alternative", alternative_result, metadata={"dataset": "panel-v1"})
+print(store.compare())
+store.report("experiments/comparison.html")
+restored = store.load("baseline")
+```
+
+Each run contains `metadata.json`, JSON tables for predictions, metrics, ensemble
+weights and fold audits, and `report.html`. Forecaster configuration, feature lists,
+column roles and transform names are captured automatically. Add dataset versions
+and custom model details through `metadata`. Names are unique and existing runs
+cannot be overwritten. Writes are staged so failed saves do not leave partial runs.
+
+`compare(names=[...])` and `report(..., names=[...])` select a subset; by default they
+include all saved runs. Metrics use each run's own sample, so compare matching targets,
+dates and entities. The report shows configuration details and fold audits, with
+previews limited to 100 predictions and weight rows; saved tables retain all rows.
+Fitted estimators and executable transforms are not serialized, and loading a run
+restores analysis artifacts rather than a runnable model. Callable names document
+transforms but cannot reproduce their implementations. Metadata must be JSON serializable.
+
+Run the complete two-experiment example into a new output directory:
+
+```bash
+python examples/compare_experiments.py --output /tmp/fx-experiments
+```

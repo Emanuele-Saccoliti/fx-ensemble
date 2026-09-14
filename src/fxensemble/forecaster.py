@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, field
 from typing import Any
 
 import numpy as np
@@ -29,6 +29,7 @@ class ForecastResult:
     ensemble_weights: pd.DataFrame
     fold_audit: pd.DataFrame
     fitted_models: Mapping[tuple[int, str], Pipeline]
+    metadata: Mapping[str, Any] = field(default_factory=dict)
 
 
 class EnsembleForecaster:
@@ -199,6 +200,23 @@ class EnsembleForecaster:
             ensemble_weights=combined.weights,
             fold_audit=pd.DataFrame.from_records(audit_records),
             fitted_models=stored,
+            metadata={
+                "forecaster": asdict(self.config),
+                "validation": asdict(self.validation),
+                "numeric_features": numeric,
+                "categorical_features": categorical,
+                "id_columns": identifiers,
+                "target_column": target_column,
+                "date_column": date_column,
+                "label_available_column": label_available_column,
+                "feature_availability": availability,
+                "target_transform": None if target_transform is None else getattr(
+                    target_transform, "__qualname__", getattr(target_transform, "__name__", type(target_transform).__name__)
+                ),
+                "inverse_target_transform": None if inverse_target_transform is None else getattr(
+                    inverse_target_transform, "__qualname__", getattr(inverse_target_transform, "__name__", type(inverse_target_transform).__name__)
+                ),
+            },
         )
 
     @staticmethod

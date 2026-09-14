@@ -8,6 +8,7 @@ from fxensemble.config import (
 )
 from fxensemble.ensemble import EnsembleResult, combine_oos_predictions
 from fxensemble.forecaster import EnsembleForecaster, ForecastResult
+from fxensemble.experiments import Experiment, ExperimentStore
 from fxensemble.metrics import performance_metrics, regression_metrics
 from fxensemble.portfolio import (
     BacktestResult,
@@ -26,6 +27,8 @@ __all__ = [
     "BacktestResult",
     "EnsembleForecaster",
     "EnsembleResult",
+    "Experiment",
+    "ExperimentStore",
     "ExpandingFold",
     "ExpandingWindowConfig",
     "ForecastResult",

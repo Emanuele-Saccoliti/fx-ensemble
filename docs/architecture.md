@@ -81,3 +81,15 @@ weights. Reported net returns satisfy
 
 Turnover is one half of absolute traded weight. This convention is explicit and is
 tested through the returned holdings ledger.
+
+## Experiment artifacts
+
+`ForecastResult.metadata` captures forecasting configuration and input column roles.
+`ExperimentStore` persists a named result through a staged directory, then exposes
+loading, metric comparison and offline HTML reporting. JSON tables preserve dates
+and table schemas without pickling estimators. Floating-point values are serialized
+with 15 decimal places; this is an analysis archive, not a bit-exact model checkpoint.
+Custom metadata records dataset identifiers or other provenance supplied by callers.
+Reports compare saved metrics on each run's original sample and do not align samples
+or claim statistical superiority. Prediction and weight previews are bounded to keep
+HTML output manageable; the complete tables remain in the saved artifacts.

@@ -69,6 +69,10 @@ def test_end_to_end_volatility_forecast_is_positive_audited_and_deterministic():
     prediction_columns = [column for column in first.predictions if column.startswith("prediction_")]
     assert (first.predictions[prediction_columns] > 0).all().all()
     assert first.predictions.equals(second.predictions)
+    assert first.metadata["target_column"] == "volatility"
+    assert first.metadata["forecaster"]["seed"] == 7
+    assert first.metadata["target_transform"] == "log"
+    assert first.metadata["validation"]["min_train_periods"] == 12
     assert first.fitted_models == {}
     assert (first.fold_audit["train_end"] < first.fold_audit["forecast_date"]).all()
     assert (

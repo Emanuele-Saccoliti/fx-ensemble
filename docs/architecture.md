@@ -93,3 +93,44 @@ Custom metadata records dataset identifiers or other provenance supplied by call
 Reports compare saved metrics on each run's original sample and do not align samples
 or claim statistical superiority. Prediction and weight previews are bounded to keep
 HTML output manageable; the complete tables remain in the saved artifacts.
+
+## Nested temporal hyperparameter selection
+
+`ForecasterConfig.grid_search` optionally supplies a `GridSearchConfig` with
+per-estimator grids. `EnsembleForecaster` constructs one shared set of inner folds
+from each outer training sample using `ExpandingWindowSplitter`. The latest
+`n_splits` eligible dates after inner `step_periods` thinning are used. A split
+contains all eligible rows at its validation date, preserving entity/date grouping.
+`allow_empty=True` lets the inner splitter return an empty list so the configured
+insufficient-history policy can handle it; the splitter default still raises.
+
+The information constraints for inner origin `s` and outer origin `t` are:
+
+- inner training: feature date < `s`, label available <= `s`;
+- inner validation: feature date = `s` < `t`, label available <= `t`;
+- outer validation: excluded from all candidate selection and preprocessing fits.
+
+Feature availability declarations are checked again at `s`, including historical
+training rows. Labels used for scoring can become available after `s`, provided they
+are known by `t`. Missing or unreleased outer-training labels never enter the search.
+As with forecasting, callers supply vintage-correct features.
+
+`search.select_parameters` evaluates sklearn `ParameterGrid` candidates with fresh
+pipelines per inner split. Fixed model parameters are merged with each candidate,
+which takes precedence on shared keys. Loss is computed in original target units,
+then averaged equally across validation dates. Search transforms must be stateless
+and pointwise. The first candidate in deterministic grid order wins an exact tie.
+Model seeds retain their registry/configuration semantics.
+
+The forecaster refits the winning parameters on all outer training rows. It continues
+to parallelize at the model level only. Candidate errors fail the run with context.
+Insufficient inner history raises by default; explicit `use_fixed` records a selected
+fallback with undefined score and no candidate fits. No partial search is performed.
+
+`ForecastResult.search_results` stores one row per candidate, outer fold and model,
+including parameters, split losses, score, selection, status and elapsed seconds.
+`search_audit` stores inner split boundaries and label availability once per outer
+fold, shared across models. Timings are observational and not deterministic.
+Experiment schema 2 persists both tables and includes them in HTML reports; loading
+schema 1 creates empty search tables. Grid search is disabled by default and does
+not alter the fixed-parameter prediction path.

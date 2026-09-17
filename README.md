@@ -112,6 +112,82 @@ See [`docs/architecture.md`](docs/architecture.md) for data contracts and compon
 boundaries. The runnable example is in
 [`examples/volatility_forecast.py`](examples/volatility_forecast.py).
 
+## Optional temporal grid search
+
+A single grid-search engine supports every registered model, with a separate grid
+for each model. Fixed parameters remain the default (`grid_search=None`). Configure
+`tuning` and pass it to `ForecasterConfig`:
+
+```python
+from fxensemble import GridSearchConfig
+
+tuning = GridSearchConfig(
+    parameter_grids={
+        "ridge": {"alpha": [0.1, 1.0, 10.0]},
+        "elastic_net": {"alpha": [0.001, 0.01], "l1_ratio": [0.2, 0.8]},
+        "random_forest": {"max_depth": [4, 8], "min_samples_leaf": [2, 5]},
+        "extra_trees": {"max_depth": [4, 8], "min_samples_leaf": [2, 5]},
+        "hist_gradient_boosting": {"learning_rate": [0.05, 0.1], "max_leaf_nodes": [7, 15]},
+    },
+    min_train_periods=12,
+    n_splits=3,
+    step_periods=1,
+    scoring="mae",  # alternatively "mse"; positive loss, lower is better
+    on_insufficient_history="raise",  # or explicitly "use_fixed"
+)
+forecaster = EnsembleForecaster(
+    ForecasterConfig(
+        models=tuple(tuning.parameter_grids),
+        grid_search=tuning,
+        model_parameters={
+            "random_forest": {"n_estimators": 50},
+            "extra_trees": {"n_estimators": 50},
+        },
+    ),
+    ExpandingWindowConfig(min_train_periods=24),
+)
+# Call forecaster.fit_predict(...) with the same input contract as above.
+```
+
+At each outer forecast origin, tuning uses only the outer training sample. It
+selects the latest `n_splits` eligible inner forecast dates after applying
+`step_periods`, with expanding training windows and one validation date per split.
+Inner training labels must be available by the inner origin; validation labels must
+be available by the outer origin. Rows are split by date, never randomly shuffled.
+Preprocessing is fitted afresh for each candidate and inner split. Declared feature
+availability is checked at the inner origins as well as the outer origin.
+
+The selected candidate minimizes the mean of the per-date MAE or MSE values. Each
+validation date has equal weight, even if the number of entities differs. With target
+transforms, training uses the transformed target and scoring uses predictions mapped
+back to original target units. Transform functions must be stateless, pointwise
+functions such as `np.log` and `np.exp`. Ties choose the first candidate in sklearn's
+`ParameterGrid` order. The winning model is refitted on the complete outer training
+sample before the untouched outer fold is predicted.
+
+Grids use estimator parameter names (`alpha`, not `model__alpha`). Candidate values
+override the corresponding `model_parameters`; other fixed parameters are retained.
+Models without a grid keep their fixed parameters. Invalid candidates fail with
+model, candidate, and fold context rather than being silently skipped. If fewer than
+`n_splits` valid inner folds exist, the default is an error. With `use_fixed`, tuned
+models use their fixed parameters for that outer fold and record the fallback.
+
+`result.search_results` contains each candidate's parameters, per-split losses,
+mean score, selected flag, status and evaluation time, by outer fold and model.
+`result.search_audit` contains the inner training and validation date/availability
+audits, shared across tuned models. Both are saved by `ExperimentStore` and shown in
+HTML reports. Inner selection scores are separate from outer forecast metrics.
+
+Keep grids small: the search costs `candidates × n_splits` fits per tuned model and
+outer fold, plus the final refit. `n_jobs` still parallelizes models; inner candidate
+fits are serial to avoid adding another parallelism layer.
+
+Run a complete fixed-versus-tuned example into a new output directory:
+
+```bash
+python examples/grid_search.py --output /tmp/fx-grid-search
+```
+
 ## Save and compare experiments
 
 `ExperimentStore` saves named forecasting runs locally and generates standalone HTML
@@ -130,7 +206,7 @@ restored = store.load("baseline")
 ```
 
 Each run contains `metadata.json`, JSON tables for predictions, metrics, ensemble
-weights and fold audits, and `report.html`. Forecaster configuration, feature lists,
+weights, fold audits, search results and inner search audits, and `report.html`. Forecaster configuration, feature lists,
 column roles and transform names are captured automatically. Add dataset versions
 and custom model details through `metadata`. Names are unique and existing runs
 cannot be overwritten. Writes are staged so failed saves do not leave partial runs.
@@ -148,3 +224,6 @@ Run the complete two-experiment example into a new output directory:
 ```bash
 python examples/compare_experiments.py --output /tmp/fx-experiments
 ```
+
+New saves use experiment schema version 2. Version 1 experiments remain readable;
+their search tables are empty.

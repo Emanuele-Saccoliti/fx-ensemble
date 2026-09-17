@@ -15,6 +15,7 @@ from fxensemble.config import ExpandingWindowConfig, ForecasterConfig
 from fxensemble.ensemble import combine_oos_predictions
 from fxensemble.preprocessing import make_pipeline
 from fxensemble.registry import ModelRegistry
+from fxensemble.search import select_parameters
 from fxensemble.validation import ExpandingWindowSplitter
 
 
@@ -30,6 +31,8 @@ class ForecastResult:
     fold_audit: pd.DataFrame
     fitted_models: Mapping[tuple[int, str], Pipeline]
     metadata: Mapping[str, Any] = field(default_factory=dict)
+    search_results: pd.DataFrame = field(default_factory=pd.DataFrame)
+    search_audit: pd.DataFrame = field(default_factory=pd.DataFrame)
 
 
 class EnsembleForecaster:
@@ -114,6 +117,8 @@ class EnsembleForecaster:
         prediction_parts: list[pd.DataFrame] = []
         audit_records: list[dict[str, object]] = []
         stored: dict[tuple[int, str], Pipeline] = {}
+        search_records: list[dict[str, Any]] = []
+        search_audits: list[dict[str, Any]] = []
 
         for fold in folds:
             train = work.iloc[fold.train_indices]
@@ -133,17 +138,63 @@ class EnsembleForecaster:
                     f"Target transform produced non-finite values in fold {fold.fold_id}"
                 )
 
-            def fit_one(model_name: str) -> tuple[str, Pipeline, np.ndarray]:
-                pipeline = make_pipeline(
-                    model_name,
-                    numeric_features=numeric,
-                    categorical_features=categorical,
-                    registry=self.registry,
-                    preprocessing=self.config.preprocessing,
-                    model_parameters=dict(
-                        self.config.model_parameters.get(model_name, {})
-                    ),
-                )
+            search = self.config.grid_search
+            inner_folds = []
+            if search is not None:
+                inner_folds = ExpandingWindowSplitter(ExpandingWindowConfig(
+                    min_train_periods=search.min_train_periods,
+                    step_periods=search.step_periods,
+                )).split(
+                    train, date_column=date_column, target_column=target_column,
+                    label_available_column=label_available_column, allow_empty=True,
+                )[-search.n_splits:]
+                if len(inner_folds) >= search.n_splits:
+                    for inner in inner_folds:
+                        inner_train = train.iloc[inner.train_indices]
+                        inner_test = train.iloc[inner.test_indices]
+                        self._check_feature_availability(
+                            pd.concat([inner_train, inner_test]),
+                            forecast_date=inner.forecast_date,
+                            feature_availability=availability,
+                        )
+                        search_audits.append({
+                            "fold_id": fold.fold_id,
+                            "forecast_date": fold.forecast_date,
+                            "inner_fold_id": inner.fold_id,
+                            "validation_date": inner.forecast_date,
+                            "train_rows": len(inner_train),
+                            "validation_rows": len(inner_test),
+                            "train_start": inner_train[date_column].min(),
+                            "train_end": inner_train[date_column].max(),
+                            "latest_training_label_available": inner_train[label_available_column].max(),
+                            "latest_validation_label_available": inner_test[label_available_column].max(),
+                        })
+
+            def fit_one(model_name: str) -> tuple[str, Pipeline, np.ndarray, list[dict[str, Any]]]:
+                def factory(parameters: dict[str, Any]) -> Pipeline:
+                    return make_pipeline(
+                        model_name,
+                        numeric_features=numeric,
+                        categorical_features=categorical,
+                        registry=self.registry,
+                        preprocessing=self.config.preprocessing,
+                        model_parameters=parameters,
+                    )
+
+                parameters = dict(self.config.model_parameters.get(model_name, {}))
+                records = []
+                if search is not None and model_name in search.parameter_grids:
+                    try:
+                        parameters, records = select_parameters(
+                            train, folds=inner_folds, model_name=model_name,
+                            config=search, base_parameters=parameters,
+                            pipeline_factory=factory, features=features,
+                            target_column=target_column, target_transform=target_transform,
+                            inverse_target_transform=inverse_target_transform,
+                        )
+                    except ValueError as error:
+                        raise ValueError(f"Outer fold {fold.fold_id} ({fold.forecast_date}): {error}") from error
+                pipeline = factory(parameters)
                 pipeline.fit(train[features], y_train)
                 forecast = np.asarray(pipeline.predict(test[features]), dtype=float)
                 if inverse_target_transform is not None:
@@ -155,15 +206,19 @@ class EnsembleForecaster:
                         f"Model {model_name!r} returned invalid predictions in "
                         f"fold {fold.fold_id}"
                     )
-                return model_name, pipeline, forecast
+                return model_name, pipeline, forecast, records
 
             fitted = Parallel(n_jobs=self.config.n_jobs, prefer="threads")(
                 delayed(fit_one)(name) for name in self.config.models
             )
             columns = identifiers + [date_column, label_available_column, target_column]
             part = test[columns].copy()
-            for model_name, pipeline, forecast in fitted:
+            for model_name, pipeline, forecast, records in fitted:
                 part[f"prediction_{model_name}"] = forecast
+                search_records.extend({
+                    "fold_id": fold.fold_id, "forecast_date": fold.forecast_date,
+                    "model": model_name, **record,
+                } for record in records)
                 if store_fitted_models:
                     stored[(fold.fold_id, model_name)] = pipeline
             prediction_parts.append(part)
@@ -200,6 +255,8 @@ class EnsembleForecaster:
             ensemble_weights=combined.weights,
             fold_audit=pd.DataFrame.from_records(audit_records),
             fitted_models=stored,
+            search_results=pd.DataFrame.from_records(search_records),
+            search_audit=pd.DataFrame.from_records(search_audits),
             metadata={
                 "forecaster": asdict(self.config),
                 "validation": asdict(self.validation),

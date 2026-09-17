@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from html import escape
 from importlib.metadata import version
@@ -22,6 +22,8 @@ from fxensemble.metrics import regression_metrics
 
 
 def _json_default(value: Any) -> Any:
+    if isinstance(value, np.ndarray):
+        return value.tolist()
     if isinstance(value, np.generic):
         return value.item()
     if isinstance(value, (Path, pd.Timestamp)):
@@ -39,6 +41,8 @@ class Experiment:
     ensemble_weights: pd.DataFrame
     fold_audit: pd.DataFrame
     metrics: pd.DataFrame
+    search_results: pd.DataFrame = field(default_factory=pd.DataFrame)
+    search_audit: pd.DataFrame = field(default_factory=pd.DataFrame)
 
 
 class ExperimentStore:
@@ -80,7 +84,7 @@ class ExperimentStore:
             raise ValueError("At least one prediction column is required")
         metrics = regression_metrics(result.predictions, actual_column=actual, prediction_columns=columns)
         manifest = {
-            "schema_version": 1,
+            "schema_version": 2,
             "environment": {
                 "python": platform.python_version(),
                 **{package: version(package) for package in ("numpy", "pandas", "scikit-learn", "scipy")},
@@ -103,9 +107,14 @@ class ExperimentStore:
                 "ensemble_weights": result.ensemble_weights,
                 "fold_audit": result.fold_audit,
                 "metrics": metrics,
+                "search_results": result.search_results,
+                "search_audit": result.search_audit,
             }.items():
                 frame.to_json(staging / f"{key}.json", orient="table", date_format="iso", index=False, double_precision=15)
-            experiment = Experiment(name, manifest, result.predictions, result.ensemble_weights, result.fold_audit, metrics)
+            experiment = Experiment(
+                name, manifest, result.predictions, result.ensemble_weights,
+                result.fold_audit, metrics, result.search_results, result.search_audit,
+            )
             (staging / "report.html").write_text(_report([experiment]), encoding="utf-8")
             staging.rename(destination)
         finally:
@@ -117,9 +126,15 @@ class ExperimentStore:
         """Load portable JSON tables, without executing serialized Python code."""
         path = self._path(name)
         manifest = json.loads((path / "metadata.json").read_text(encoding="utf-8"))
-        if manifest.get("schema_version") != 1:
+        if manifest.get("schema_version") not in (1, 2):
             raise ValueError("Unsupported experiment schema version")
-        return Experiment(name=name, metadata=manifest, **{
+        search_tables = {}
+        if manifest["schema_version"] == 2:
+            search_tables = {
+                key: pd.read_json(path / f"{key}.json", orient="table")
+                for key in ("search_results", "search_audit")
+            }
+        return Experiment(name=name, metadata=manifest, **search_tables, **{
             key: pd.read_json(path / f"{key}.json", orient="table")
             for key in ("predictions", "ensemble_weights", "fold_audit", "metrics")
         })
@@ -194,6 +209,20 @@ def _report(experiments: Sequence[Experiment]) -> str:
             "<details><summary>Predictions (first 100 rows)</summary>",
             _table(experiment.predictions.head(100)), "</details>",
         ])
+        if not experiment.search_results.empty:
+            selected = experiment.search_results.loc[experiment.search_results["selected"]]
+            parts.extend([
+                "<h3>Temporal grid search</h3>",
+                "<p>Scores are mean inner-fold losses on original target units (lower is better). "
+                "They are selection scores, not outer backtest performance. "
+                "Insufficient-history rows record use of fixed parameters.</p>",
+                "<details open><summary>Selected parameters (first 100 rows)</summary>",
+                _table(selected.head(100)), "</details>",
+                "<details><summary>All candidates (first 100 rows)</summary>",
+                _table(experiment.search_results.head(100)), "</details>",
+                "<details><summary>Inner fold audit (first 100 rows)</summary>",
+                _table(experiment.search_audit.head(100)), "</details>",
+            ])
     return """<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Forecast experiments</title><style>

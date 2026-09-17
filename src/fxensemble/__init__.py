@@ -3,6 +3,7 @@
 from fxensemble.config import (
     ExpandingWindowConfig,
     ForecasterConfig,
+    GridSearchConfig,
     PerformanceEnsembleConfig,
     PreprocessingConfig,
 )
@@ -33,6 +34,7 @@ __all__ = [
     "ExpandingWindowConfig",
     "ForecastResult",
     "ForecasterConfig",
+    "GridSearchConfig",
     "ModelRegistry",
     "PerformanceEnsembleConfig",
     "PreprocessingConfig",

@@ -38,6 +38,7 @@ class ExpandingWindowSplitter:
         date_column: str,
         target_column: str,
         label_available_column: str,
+        allow_empty: bool = False,
     ) -> list[ExpandingFold]:
         required = {date_column, target_column, label_available_column}
         missing = required.difference(frame.columns)
@@ -75,7 +76,7 @@ class ExpandingWindowSplitter:
                 )
             eligible_number += 1
 
-        if not folds:
+        if not folds and not allow_empty:
             raise ValueError(
                 "No valid expanding-window folds; check dates, label availability, "
                 "and min_train_periods"

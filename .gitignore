@@ -6,3 +6,4 @@ build/
 .package-smoke/
 .venv/
 CHANGELOG.md
+.DS_Store

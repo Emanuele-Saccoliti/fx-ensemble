@@ -1,6 +1,6 @@
-# fxensemble
+# fx-ensemble
 
-`fxensemble` is a Python framework for leakage-safe machine-learning ensembles on
+`fx-ensemble` is a Python framework for leakage-safe machine-learning ensembles on
 time-indexed panel data.
 
 The framework provides:
@@ -86,14 +86,22 @@ the framework will reject values dated after the forecast origin.
 
 ## Built-in models
 
-| Name | Estimator | Fold-local treatment |
-|---|---|---|
-| `ols` | `LinearRegression` | imputation, indicators, scaling, encoding |
-| `ridge` | `Ridge` | imputation, indicators, scaling, encoding |
-| `elastic_net` | `ElasticNet` | imputation, indicators, scaling, encoding |
-| `random_forest` | `RandomForestRegressor` | imputation, indicators, encoding |
-| `extra_trees` | `ExtraTreesRegressor` | imputation, indicators, encoding |
-| `hist_gradient_boosting` | `HistGradientBoostingRegressor` | imputation, indicators, encoding |
+| Name | Estimator | Model family | Strength / trade-off |
+|---|---|---|---|
+| `ols` | `LinearRegression` | linear regression | simple, fast, and easy to inspect; can be unstable with correlated predictors and only models linear effects |
+| `ridge` | `Ridge` | regularized linear regression | stabilizes linear forecasts when predictors are correlated; shrinkage can add bias and does not select features |
+| `elastic_net` | `ElasticNet` | sparse regularized linear regression | can shrink coefficients and remove weak predictors; requires tuning `alpha` and `l1_ratio`, and remains linear |
+| `random_forest` | `RandomForestRegressor` | bagged decision trees | robust nonlinear baseline with low sensitivity to individual trees; can be slower and less interpretable |
+| `extra_trees` | `ExtraTreesRegressor` | randomized bagged decision trees | randomized splits create a diverse nonlinear ensemble; the extra randomness can trade accuracy for variance reduction |
+| `hist_gradient_boosting` | `HistGradientBoostingRegressor` | gradient-boosted decision trees | efficient nonlinear boosting model; more sensitive to hyperparameters and can overfit short training histories |
+
+All built-in models use preprocessing fitted only on the training portion of each
+validation fold: numeric imputation and missing-value indicators, categorical
+imputation and encoding, plus scaling for linear models. The fitted transformations
+are then applied unchanged to that fold's test period, preventing information from
+future data from leaking into validation or out-of-sample forecasts. Relative model
+performance is data-dependent, so compare candidates with the framework's temporal
+validation or optional nested temporal grid search.
 
 Register any compatible regressor without modifying the framework:
 
@@ -224,6 +232,3 @@ Run the complete two-experiment example into a new output directory:
 ```bash
 python examples/compare_experiments.py --output /tmp/fx-experiments
 ```
-
-New saves use experiment schema version 2. Version 1 experiments remain readable;
-their search tables are empty.

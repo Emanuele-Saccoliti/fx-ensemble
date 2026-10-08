@@ -170,6 +170,10 @@ def continuous_backtest(
     returns = asset_returns.copy()
     weights[date_column] = pd.to_datetime(weights[date_column], errors="raise")
     returns[date_column] = pd.to_datetime(returns[date_column], errors="raise")
+    if weights[date_column].isna().any():
+        raise ValueError("Target weights contain missing dates")
+    if returns[date_column].isna().any():
+        raise ValueError("Asset returns contain missing dates")
     merged = weights.merge(
         returns,
         on=[date_column, asset_column],

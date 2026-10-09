@@ -24,6 +24,16 @@ def volatility_scaled_scores(
     expected, volatility = expected_returns.align(predicted_volatility, join="inner")
     if expected.empty or expected.isna().any() or volatility.isna().any():
         raise ValueError("Expected returns and volatility must align without missing values")
+    invalid_expected = np.count_nonzero(
+        np.isnan(expected) | np.isinf(expected)
+    )
+    invalid_volatility = np.count_nonzero(
+        np.isnan(volatility) | np.isinf(volatility)
+    )
+    if invalid_expected > 0:
+        raise ValueError("Expected returns must be finite")
+    if invalid_volatility > 0:
+        raise ValueError("Predicted volatility must be finite")
     if (volatility <= 0).any():
         raise ValueError("Predicted volatility must be strictly positive")
     return expected / volatility.clip(lower=floor)

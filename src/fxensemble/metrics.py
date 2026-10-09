@@ -60,9 +60,12 @@ def performance_metrics(
     """Compute annualized return, risk, Sharpe ratio, and maximum drawdown."""
 
     values = np.asarray(returns, dtype=float)
-    values = values[np.isfinite(values)]
+    invalid_count = np.count_nonzero(np.isnan(values) | np.isinf(values))
+    if invalid_count > 0:
+        raise ValueError("Returns must be finite and contain no missing values")
     if periods_per_year < 1 or len(values) == 0:
         raise ValueError("Returns and periods_per_year must be non-empty and positive")
+
     wealth = np.concatenate(([1.0], np.cumprod(1.0 + values)))
     peak = np.maximum.accumulate(wealth)
     drawdown = wealth / peak - 1.0

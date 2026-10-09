@@ -38,6 +38,8 @@ class PerformanceEnsembleConfig:
     def __post_init__(self) -> None:
         if self.minimum_history_periods < 1 or self.epsilon <= 0:
             raise ValueError("Invalid performance-ensemble configuration")
+        if self.loss not in ("mse", "mae"):
+            raise ValueError("Performance ensemble loss must be 'mse' or 'mae'")
 
 
 @dataclass(frozen=True)
